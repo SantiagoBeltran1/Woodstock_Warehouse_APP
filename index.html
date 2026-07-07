@@ -325,6 +325,50 @@ tbody td{padding:9px 14px;color:var(--text);vertical-align:middle}
   </div>
 </div>
 
+<!-- ASSIGN PRODUCT TO EMPTY LOCATION MODAL -->
+<div class="modal-overlay" id="assignModal">
+  <div class="modal" style="width:480px">
+    <button class="modal-close" onclick="closeModal('assignModal')">✕</button>
+    <div class="modal-title">Assign product to <span id="assignLocLabel" style="color:var(--orange)"></span></div>
+    <div class="modal-sub">Search for an existing product or add a new one.</div>
+    <div class="form-group">
+      <label class="form-label">Search existing product (SKU or name)</label>
+      <input class="form-input" id="assignSearch" placeholder="Type SKU or name..." oninput="filterAssignSearch()"/>
+    </div>
+    <div id="assignResults" style="max-height:200px;overflow-y:auto;border:1px solid var(--grey-border);border-radius:7px;margin-bottom:12px"></div>
+    <div style="text-align:center;font-size:12px;color:var(--grey);margin:10px 0">— or —</div>
+    <button class="btn btn-secondary" style="width:100%;justify-content:center" onclick="openAddFromEmpty()">➕ Add new product to this location</button>
+  </div>
+</div>
+
+<!-- SELECT PRODUCT FROM MULTI-PRODUCT CELL -->
+<div class="modal-overlay" id="selectProductModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('selectProductModal')">✕</button>
+    <div class="modal-title">Select product to edit</div>
+    <div class="modal-sub" id="selectProductSub"></div>
+    <div id="selectProductList"></div>
+  </div>
+</div>
+
+<!-- IMPORT BIN LOC MODAL -->
+<div class="modal-overlay" id="importModal">
+  <div class="modal" style="width:480px">
+    <button class="modal-close" onclick="closeModal('importModal')">✕</button>
+    <div class="modal-title">📥 Import BIN LOC</div>
+    <div class="modal-sub">Upload a CSV file with columns: SKU, Location. This will update locations for matching products.</div>
+    <div class="form-group">
+      <label class="form-label">Select CSV file</label>
+      <input type="file" id="importFile" accept=".csv" class="form-input" style="padding:6px"/>
+    </div>
+    <div id="importPreview" style="font-size:12px;color:var(--grey);margin-top:8px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" onclick="closeModal('importModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="processImport()">📥 Import & Update</button>
+    </div>
+  </div>
+</div>
+
 <!-- APP SHELL -->
 <div class="topbar">
   <div class="logo" onclick="navigate('dashboard')">
@@ -358,6 +402,7 @@ tbody td{padding:9px 14px;color:var(--text);vertical-align:middle}
         <p id="lastUpdate">Loading...</p>
       </div>
       <button class="btn btn-primary" onclick="navigate('catalog')">📦 View catalog</button>
+      <button class="btn btn-secondary" onclick="openModal('importModal')">📥 Import BIN LOC</button>
     </div>
     <div class="stats">
       <div class="stat"><div class="stat-label">Active locations</div><div class="stat-val" id="statTotal">—</div><div class="stat-sub" id="statAisles">— aisles</div></div>
@@ -423,6 +468,7 @@ tbody td{padding:9px 14px;color:var(--text);vertical-align:middle}
         <option value="unlocated">No location</option>
       </select>
       <button class="btn btn-primary" onclick="openModal('addProductModal')">➕ Add product</button>
+      <button class="btn btn-secondary" onclick="exportToExcel()">📥 Export to Excel</button>
     </div>
     <div class="table-wrap">
       <table>
@@ -819,27 +865,141 @@ function toggleEmptyFilter() {
   renderMap();
 }
 
+let currentAssignLoc = '';
+
 function showCell(loc) {
   const locMap = getLocMap();
-  const prods = locMap[loc]||[];
-  document.getElementById('cellModalTitle').textContent = 'Location: '+loc;
-  document.getElementById('cellModalSub').textContent = prods.length ? `${prods.length} product(s) assigned` : 'This location is empty';
-  const body = document.getElementById('cellModalBody');
-  if (prods.length) {
-    body.innerHTML = prods.map(p=>`
-      <div style="background:var(--green-bg);border:1px solid #97C459;border-radius:8px;padding:10px 12px;margin-bottom:8px">
-        <div style="font-size:13px;font-weight:700;color:var(--navy)">${p.sku}</div>
-        <div style="font-size:12px;color:var(--text2);margin-top:2px">${p.name}</div>
-        <div style="font-size:11px;color:var(--grey);margin-top:4px">All locations: ${(p.locations||[]).join(', ')||'—'}</div>
-      </div>`).join('');
-    document.getElementById('cellModalActions').innerHTML = `
-      <button class="btn btn-secondary" onclick="closeModal('cellModal')">Close</button>
-      <button class="btn btn-primary" onclick="openEditForLoc('${loc}')">✏️ Edit location</button>`;
-  } else {
-    body.innerHTML = `<div style="background:var(--red-bg);border:1px solid #F09595;border-radius:8px;padding:12px;text-align:center;color:var(--red);font-weight:600;font-size:13px">EMPTY — no product assigned</div>`;
-    document.getElementById('cellModalActions').innerHTML = `<button class="btn btn-secondary" onclick="closeModal('cellModal')">Close</button>`;
+  const prods = locMap[loc] || [];
+
+  if (prods.length === 0) {
+    // EMPTY — open assign modal
+    currentAssignLoc = loc;
+    document.getElementById('assignLocLabel').textContent = loc;
+    document.getElementById('assignSearch').value = '';
+    filterAssignSearch();
+    openModal('assignModal');
+    return;
   }
+
+  if (prods.length > 1) {
+    // Multiple products — let user pick which to edit
+    document.getElementById('selectProductSub').textContent = `${prods.length} products at location ${loc}`;
+    document.getElementById('selectProductList').innerHTML = prods.map(p => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid var(--grey-border);border-radius:8px;margin-bottom:8px">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--navy)">${p.sku}</div>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px">${p.name}</div>
+          <div style="font-size:11px;color:var(--grey);margin-top:2px">All locations: ${(p.locations||[]).join(', ')}</div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="closeModal('selectProductModal');openEditById(${p.id})">✏️ Edit</button>
+      </div>`).join('');
+    openModal('selectProductModal');
+    return;
+  }
+
+  // Single product — show detail
+  const p = prods[0];
+  document.getElementById('cellModalTitle').textContent = 'Location: ' + loc;
+  document.getElementById('cellModalSub').textContent = '1 product assigned';
+  document.getElementById('cellModalBody').innerHTML = `
+    <div style="background:var(--green-bg);border:1px solid #97C459;border-radius:8px;padding:10px 12px">
+      <div style="font-size:13px;font-weight:700;color:var(--navy)">${p.sku}</div>
+      <div style="font-size:12px;color:var(--text2);margin-top:2px">${p.name}</div>
+      <div style="font-size:11px;color:var(--grey);margin-top:4px">All locations: ${(p.locations||[]).join(', ') || '—'}</div>
+    </div>`;
+  document.getElementById('cellModalActions').innerHTML = `
+    <button class="btn btn-secondary" onclick="closeModal('cellModal')">Close</button>
+    <button class="btn btn-primary" onclick="openEditForLoc('${loc}')">✏️ Edit location</button>`;
   openModal('cellModal');
+}
+
+// ─── ASSIGN TO EMPTY LOCATION ─────────────────────────────────────────────────
+function filterAssignSearch() {
+  const q = (document.getElementById('assignSearch').value || '').toLowerCase();
+  const container = document.getElementById('assignResults');
+  const matches = products.filter(p =>
+    !q || p.sku.toLowerCase().includes(q) || p.name.toLowerCase().includes(q)
+  ).slice(0, 20);
+
+  if (!matches.length) {
+    container.innerHTML = '<div style="padding:12px;text-align:center;color:var(--grey);font-size:12px">No products found</div>';
+    return;
+  }
+  container.innerHTML = matches.map(p => {
+    const locs = (p.locations||[]).join(', ') || 'No location';
+    return `<div style="padding:9px 12px;border-bottom:1px solid #f0f0f0;display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-size:12px;font-weight:600;color:var(--navy)">${p.sku}</div>
+        <div style="font-size:11px;color:var(--grey)">${p.name.slice(0,40)}${p.name.length>40?'…':''} — <span style="color:var(--orange)">${locs}</span></div>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="assignProductToLoc(${p.id})">Assign</button>
+    </div>`;
+  }).join('');
+}
+
+async function assignProductToLoc(productId) {
+  const p = products.find(x => x.id === productId);
+  if (!p) return;
+  const oldLocs = p.locations || [];
+  const newLocs = [...new Set([...oldLocs, currentAssignLoc])];
+  await sb.from('products').update({locations: newLocs, updated_at: new Date().toISOString()}).eq('id', productId);
+  await logActivity('location_update', 'product', productId, {summary: `assigned ${p.sku} to ${currentAssignLoc} (now: ${newLocs.join(', ')})`});
+  closeModal('assignModal');
+  showToast(`${p.sku} assigned to ${currentAssignLoc}`, 'success');
+  await loadAll();
+}
+
+function openAddFromEmpty() {
+  closeModal('assignModal');
+  document.getElementById('newProductSku').value = '';
+  document.getElementById('newProductName').value = '';
+  document.getElementById('newProductLoc').value = currentAssignLoc;
+  openModal('addProductModal');
+}
+
+// ─── IMPORT BIN LOC ───────────────────────────────────────────────────────────
+async function processImport() {
+  const file = document.getElementById('importFile').files[0];
+  if (!file) return showToast('Please select a CSV file first', 'error');
+
+  const reader = new FileReader();
+  reader.onload = async e => {
+    const lines = e.target.result.split('\n').filter(l => l.trim());
+    if (lines.length < 2) return showToast('CSV file is empty or invalid', 'error');
+
+    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g,'').toLowerCase());
+    const skuIdx = headers.findIndex(h => h.includes('sku') || h.includes('key'));
+    const locIdx = headers.findIndex(h => h.includes('loc') || h.includes('location') || h.includes('bin'));
+
+    if (skuIdx === -1 || locIdx === -1) return showToast('CSV must have SKU/KEY and Location columns', 'error');
+
+    const csvMap = {};
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g,''));
+      const sku = cols[skuIdx]?.trim();
+      const loc = cols[locIdx]?.trim();
+      if (sku && loc) {
+        const parsed = loc.replace(/[\[\]"]/g,'').split(',').map(l => l.trim()).filter(Boolean);
+        csvMap[sku] = [...new Set([...(csvMap[sku]||[]), ...parsed])];
+      }
+    }
+
+    const skus = Object.keys(csvMap);
+    showToast(`Updating ${skus.length} products...`, '');
+    let updated = 0, notFound = 0;
+    for (const sku of skus) {
+      const p = products.find(x => x.sku === sku || x.sku === sku.replace('-2','-1'));
+      if (!p) { notFound++; continue; }
+      const locs = csvMap[sku];
+      await sb.from('products').update({locations: locs, raw_location: locs.join(', '), updated_at: new Date().toISOString()}).eq('id', p.id);
+      updated++;
+    }
+    await logActivity('import', 'catalog', 'bulk', {summary: `imported BIN LOC — ${updated} products updated, ${notFound} not found`});
+    closeModal('importModal');
+    showToast(`✅ Updated ${updated} products. ${notFound} SKUs not found.`, 'success');
+    await loadAll();
+  };
+  reader.readAsText(file);
 }
 
 function openEditForLoc(loc) {
@@ -1089,9 +1249,47 @@ async function saveNewProduct() {
   await loadAll();
 }
 
+// ─── EXPORT TO EXCEL ─────────────────────────────────────────────────────────
+function exportToExcel() {
+  // Build CSV content
+  const headers = ['SKU', 'Product Name', 'Location(s)', 'Status'];
+  const rows = products.map(p => {
+    const locs = (p.locations || []).join(', ');
+    const status = (p.locations || []).length > 0 ? 'In Warehouse' : 'No Location';
+    return [
+      `"${(p.sku||'').replace(/"/g,'""')}"`,
+      `"${(p.name||'').replace(/"/g,'""')}"`,
+      `"${locs.replace(/"/g,'""')}"`,
+      `"${status}"`
+    ].join(',');
+  });
+
+  const csv = [headers.join(','), ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `WarehouseIQ_BIN_LOC_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(`Exported ${products.length} products`, 'success');
+}
+
 // Close modals on overlay click
 document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open')}));
 document.getElementById('nameInput').addEventListener('keydown',e=>{if(e.key==='Enter')setUser()});
+document.getElementById('importFile').addEventListener('change', function() {
+  const file = this.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const lines = e.target.result.split('\n').filter(l => l.trim());
+    document.getElementById('importPreview').innerHTML = `<span style="color:var(--green)">✅ File ready: ${lines.length - 1} rows detected. Click Import to update locations.</span>`;
+  };
+  reader.readAsText(file);
+});
 </script>
 </body>
 </html>
