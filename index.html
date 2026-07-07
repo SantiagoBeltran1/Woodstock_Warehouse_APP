@@ -547,7 +547,7 @@ async function showApp() {
 async function loadAll() {
   const [a, p, log] = await Promise.all([
     sb.from('aisles').select('*').order('id'),
-    sb.from('products').select('*').order('sku'),
+    sb.from('products').select('*').order('sku').limit(2000),
     sb.from('activity_log').select('*').order('created_at',{ascending:false}).limit(100)
   ]);
   aisles = a.data || [];
