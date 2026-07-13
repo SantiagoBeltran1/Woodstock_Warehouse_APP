@@ -423,6 +423,15 @@ tbody td{padding:9px 14px;color:var(--text);vertical-align:middle}
     <span class="logo-text">WarehouseIQ <span class="logo-sub">v2.0</span></span>
   </div>
   <div class="topbar-right">
+    <div id="whSelector" style="position:relative;display:none">
+      <button onclick="toggleWhDropdown()" style="display:flex;align-items:center;gap:6px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);border-radius:8px;padding:6px 12px;color:#fff;font-size:12px;font-weight:600;cursor:pointer">
+        🏢 <span id="whCurrentLabel">Woodstock</span> ▾
+      </button>
+      <div id="whDropdown" style="display:none;position:absolute;top:110%;right:0;background:#fff;border:1px solid #dde3ed;border-radius:10px;padding:6px;width:200px;box-shadow:0 6px 18px rgba(0,0,0,0.15);z-index:500">
+        <div style="padding:6px 10px 4px;font-size:10px;color:#888;font-weight:700;text-transform:uppercase;letter-spacing:.5px">Switch warehouse</div>
+        <div id="whOptions"></div>
+      </div>
+    </div>
     <div class="user-pill" id="userPill">
       <div class="avatar" id="userAvatar">?</div>
       <span class="user-name" id="userName">—</span>
@@ -599,6 +608,55 @@ async function autoSeedIfEmpty() {
 let currentUser = '';
 let currentUserRole = '';
 let currentUserId = null;
+let currentUserWarehouses = ['Woodstock'];
+let currentWarehouse = localStorage.getItem('wiq_warehouse') || 'Woodstock';
+
+// ─── MULTI-WAREHOUSE HELPERS ──────────────────────────────────────────────────
+function getLocs(p) {
+  return currentWarehouse === 'Edmonton' ? (p.locations_edmonton || []) : (p.locations || []);
+}
+function getRawLoc(p) {
+  return currentWarehouse === 'Edmonton' ? (p.raw_location_edmonton || '') : (p.raw_location || '');
+}
+function locUpdatePayload(locs, raw) {
+  return currentWarehouse === 'Edmonton'
+    ? { locations_edmonton: locs, raw_location_edmonton: raw, updated_at: new Date().toISOString() }
+    : { locations: locs, raw_location: raw, updated_at: new Date().toISOString() };
+}
+function whSku(p) {
+  const suffix = currentWarehouse === 'Edmonton' ? '-2' : '-1';
+  return (p.sku || '').replace(/-[12]$/, suffix);
+}
+
+function toggleWhDropdown() {
+  const d = document.getElementById('whDropdown');
+  d.style.display = d.style.display === 'none' ? 'block' : 'none';
+}
+
+function renderWhSelector() {
+  const sel = document.getElementById('whSelector');
+  if (currentUserWarehouses.length < 2) {
+    sel.style.display = 'none';
+    if (currentUserWarehouses.length === 1) currentWarehouse = currentUserWarehouses[0];
+    return;
+  }
+  sel.style.display = 'block';
+  document.getElementById('whCurrentLabel').textContent = currentWarehouse;
+  document.getElementById('whOptions').innerHTML = currentUserWarehouses.map(w => `
+    <div onclick="setWarehouse('${w}')" style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:7px;cursor:pointer;font-size:13px;${w===currentWarehouse?'background:#EBF3FB;font-weight:700;color:#043e78':'color:#333'}">
+      <span>🏢 ${w}</span>${w===currentWarehouse?'<span style="color:#043e78">✓</span>':''}
+    </div>`).join('');
+}
+
+function setWarehouse(w) {
+  currentWarehouse = w;
+  localStorage.setItem('wiq_warehouse', w);
+  document.getElementById('whDropdown').style.display = 'none';
+  renderWhSelector();
+  document.getElementById('lastUpdate').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'}) + ' · 🏢 ' + currentWarehouse;
+  renderAll();
+  showToast(`Switched to ${w}`, 'success');
+}
 let aisles = [];
 let products = [];
 let activityLog = [];
@@ -658,6 +716,8 @@ async function doLogin() {
   currentUser = user.name;
   currentUserRole = user.role;
   currentUserId = user.id;
+  currentUserWarehouses = user.warehouses || ['Woodstock'];
+  if (!currentUserWarehouses.includes(currentWarehouse)) currentWarehouse = currentUserWarehouses[0] || 'Woodstock';
   showApp();
 }
 
@@ -716,6 +776,8 @@ window.onload = async () => {
         currentUser = data[0].name;
         currentUserRole = data[0].role;
         currentUserId = data[0].id;
+        currentUserWarehouses = data[0].warehouses || ['Woodstock'];
+        if (!currentUserWarehouses.includes(currentWarehouse)) currentWarehouse = currentUserWarehouses[0] || 'Woodstock';
         showApp();
         return;
       }
@@ -736,6 +798,7 @@ async function showApp() {
   // Show/hide admin tab
   const adminTab = document.getElementById('adminTab');
   if (adminTab) adminTab.style.display = currentUserRole === 'admin' ? 'block' : 'none';
+  renderWhSelector();
 
   // Lock editing for viewers
   if (currentUserRole === 'viewer') {
@@ -746,7 +809,7 @@ async function showApp() {
 
   const h = new Date().getHours();
   document.getElementById('welcomeMsg').textContent = (h<12?'Good morning':h<17?'Good afternoon':'Good evening')+', '+currentUser;
-  document.getElementById('lastUpdate').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  document.getElementById('lastUpdate').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'}) + ' · 🏢 ' + currentWarehouse;
 
   await autoSeedIfEmpty();
   await loadAll();
@@ -805,6 +868,10 @@ function userRow(u) {
         <select class="filter-btn" style="font-size:12px;padding:4px 8px" onchange="setUserRole(${u.id}, this.value)" ${isAdmin&&u.id===currentUserId?'disabled':''}>
           ${roleOptions}
         </select>
+        <div style="display:flex;gap:8px;align-items:center;font-size:11px;color:var(--text2)">
+          <label style="display:flex;gap:3px;align-items:center;cursor:pointer"><input type="checkbox" ${(u.warehouses||['Woodstock']).includes('Woodstock')?'checked':''} onchange="toggleUserWh(${u.id},'Woodstock',this.checked)"/>Woodstock</label>
+          <label style="display:flex;gap:3px;align-items:center;cursor:pointer"><input type="checkbox" ${(u.warehouses||[]).includes('Edmonton')?'checked':''} onchange="toggleUserWh(${u.id},'Edmonton',this.checked)"/>Edmonton</label>
+        </div>
         ${u.id !== currentUserId ? `<button class="btn btn-secondary btn-sm" style="color:#A32D2D" onclick="rejectUser(${u.id})">🗑 Remove</button>` : '<span style="font-size:11px;color:var(--grey)">You</span>'}
       `}
     </div>
@@ -827,6 +894,16 @@ async function rejectUser(id) {
 async function setUserRole(id, role) {
   await sb.from('users').update({ role }).eq('id', id);
   showToast(`Role updated to ${role}`, 'success');
+}
+
+async function toggleUserWh(id, wh, enabled) {
+  const { data } = await sb.from('users').select('warehouses').eq('id', id).limit(1);
+  let whs = (data && data[0] && data[0].warehouses) || ['Woodstock'];
+  if (enabled && !whs.includes(wh)) whs.push(wh);
+  if (!enabled) whs = whs.filter(w => w !== wh);
+  if (whs.length === 0) { showToast('User must have access to at least one warehouse', 'error'); loadUsers(); return; }
+  await sb.from('users').update({ warehouses: whs }).eq('id', id);
+  showToast(`${wh} access ${enabled?'granted':'removed'}`, 'success');
 }
 
 async function loadAll() {
@@ -884,7 +961,7 @@ function getDisabled(aisle) {
 function getLocMap() {
   const map = {};
   for (const p of products) {
-    for (const loc of (p.locations||[])) {
+    for (const loc of getLocs(p)) {
       if (!map[loc]) map[loc]=[];
       map[loc].push(p);
     }
@@ -895,7 +972,7 @@ function getLocMap() {
 function computeAlerts() {
   const alerts = [];
   for (const p of products) {
-    const locs = p.locations||[];
+    const locs = getLocs(p);
     if (locs.length<=1) continue;
     const aisleSet = new Set(locs.map(l=>l[0]));
     if (aisleSet.size>1) {
@@ -952,7 +1029,7 @@ async function sendWebhook(product, newLocations, oldLocations) {
         event: 'bin_location_update',
         timestamp: new Date().toISOString(),
         updated_by: currentUser,
-        sku: product.sku,
+        sku: whSku(product),
         item_number: product.item_number || '',
         name: product.name,
         new_locations: newLocations
@@ -986,8 +1063,8 @@ function renderDashboard() {
     for (let s=1;s<=a.sections;s++) for (let l=1;l<=a.levels;l++) if (!dis.has(`${a.id}${s}-${l}`)) totalActive++;
   }
 
-  const withLoc = products.filter(p=>(p.locations||[]).length>0).length;
-  const noLoc = products.filter(p=>(p.locations||[]).length===0).length;
+  const withLoc = products.filter(p=>getLocs(p).length>0).length;
+  const noLoc = products.filter(p=>getLocs(p).length===0).length;
 
   document.getElementById('statTotal').textContent = totalActive;
   document.getElementById('statAisles').textContent = aisles.length+' aisles active';
@@ -1065,7 +1142,7 @@ function renderMap() {
   if (search) {
     for (const p of products) {
       if (p.sku.toLowerCase().includes(search)||p.name.toLowerCase().includes(search)) {
-        (p.locations||[]).forEach(l=>matchLocs.add(l));
+        getLocs(p).forEach(l=>matchLocs.add(l));
       }
     }
   }
@@ -1152,7 +1229,7 @@ function showCell(loc) {
         <div>
           <div style="font-size:13px;font-weight:700;color:var(--navy)">${p.sku}</div>
           <div style="font-size:12px;color:var(--text2);margin-top:2px">${p.name}</div>
-          <div style="font-size:11px;color:var(--grey);margin-top:2px">All locations: ${(p.locations||[]).join(', ')}</div>
+          <div style="font-size:11px;color:var(--grey);margin-top:2px">All locations: ${getLocs(p).join(', ')}</div>
         </div>
         <button class="btn btn-secondary btn-sm" onclick="closeModal('selectProductModal');openEditById(${p.id})">✏️ Edit</button>
       </div>`).join('');
@@ -1168,7 +1245,7 @@ function showCell(loc) {
     <div style="background:var(--green-bg);border:1px solid #97C459;border-radius:8px;padding:10px 12px">
       <div style="font-size:13px;font-weight:700;color:var(--navy)">${p.sku}</div>
       <div style="font-size:12px;color:var(--text2);margin-top:2px">${p.name}</div>
-      <div style="font-size:11px;color:var(--grey);margin-top:4px">All locations: ${(p.locations||[]).join(', ') || '—'}</div>
+      <div style="font-size:11px;color:var(--grey);margin-top:4px">All locations: ${getLocs(p).join(', ') || '—'}</div>
     </div>`;
   document.getElementById('cellModalActions').innerHTML = `
     <button class="btn btn-secondary" onclick="closeModal('cellModal')">Close</button>
@@ -1189,7 +1266,7 @@ function filterAssignSearch() {
     return;
   }
   container.innerHTML = matches.map(p => {
-    const locs = (p.locations||[]).join(', ') || 'No location';
+    const locs = getLocs(p).join(', ') || 'No location';
     return `<div style="padding:9px 12px;border-bottom:1px solid #f0f0f0;display:flex;align-items:center;justify-content:space-between">
       <div>
         <div style="font-size:12px;font-weight:600;color:var(--navy)">${p.sku}</div>
@@ -1203,9 +1280,9 @@ function filterAssignSearch() {
 async function assignProductToLoc(productId) {
   const p = products.find(x => x.id === productId);
   if (!p) return;
-  const oldLocs = p.locations || [];
+  const oldLocs = getLocs(p);
   const newLocs = [...new Set([...oldLocs, currentAssignLoc])];
-  await sb.from('products').update({locations: newLocs, updated_at: new Date().toISOString()}).eq('id', productId);
+  await sb.from('products').update(locUpdatePayload(newLocs, newLocs.join(', '))).eq('id', productId);
   await logActivity('location_update', 'product', productId, {summary: `assigned ${p.sku} to ${currentAssignLoc} (now: ${newLocs.join(', ')})`});
   await sendWebhook(p, newLocs, oldLocs);
   closeModal('assignModal');
@@ -1255,8 +1332,8 @@ async function processImport() {
       const p = products.find(x => x.sku === sku || x.sku === sku.replace('-2','-1'));
       if (!p) { notFound++; continue; }
       const locs = csvMap[sku];
-      const oldLocs = p.locations || [];
-      await sb.from('products').update({locations: locs, raw_location: locs.join(', '), updated_at: new Date().toISOString()}).eq('id', p.id);
+      const oldLocs = getLocs(p);
+      await sb.from('products').update(locUpdatePayload(locs, locs.join(', '))).eq('id', p.id);
       await sendWebhook(p, locs, oldLocs);
       updated++;
     }
@@ -1276,7 +1353,7 @@ function openEditForLoc(loc) {
   const p = prods[0];
   editingProductId = p.id;
   document.getElementById('editModalSub').textContent = `${p.sku} — ${p.name}`;
-  document.getElementById('editLocInput').value = (p.locations||[]).join(', ');
+  document.getElementById('editLocInput').value = getLocs(p).join(', ');
   openModal('editModal');
 }
 
@@ -1285,9 +1362,9 @@ async function saveLocationEdit() {
   const locs = raw.split(',').map(l=>l.trim()).filter(Boolean);
   const p = products.find(x=>x.id===editingProductId);
   if (!p) return;
-  const old = (p.locations||[]).join(', ');
-  const oldLocs = p.locations || [];
-  await sb.from('products').update({locations:locs,raw_location:raw,updated_at:new Date().toISOString()}).eq('id',editingProductId);
+  const old = getLocs(p).join(', ');
+  const oldLocs = getLocs(p);
+  await sb.from('products').update(locUpdatePayload(locs, raw)).eq('id',editingProductId);
   await logActivity('location_update','product',editingProductId,{summary:`moved ${p.sku} from [${old}] to [${locs.join(', ')}]`});
   await sendWebhook(p, locs, oldLocs);
   closeModal('editModal');
@@ -1313,7 +1390,7 @@ function renderAlerts() {
       <div class="alert-info">
         <div style="font-size:13px;font-weight:700;color:var(--navy)">${a.product.sku}</div>
         <div style="font-size:12px;color:var(--text2);margin-top:2px">${a.product.name}</div>
-        <div class="alert-locs">${(a.product.locations||[]).map(l=>`<span class="alert-loc-tag ${a.type}">${l}</span>`).join('')}</div>
+        <div class="alert-locs">${getLocs(a.product).map(l=>`<span class="alert-loc-tag ${a.type}">${l}</span>`).join('')}</div>
         <div class="alert-reason">${a.reason}</div>
       </div>
       <div class="alert-actions">
@@ -1334,7 +1411,7 @@ function openEditById(id) {
   const p = products.find(x=>x.id===id);
   if (!p) return;
   document.getElementById('editModalSub').textContent = `${p.sku} — ${p.name}`;
-  document.getElementById('editLocInput').value = (p.locations||[]).join(', ');
+  document.getElementById('editLocInput').value = getLocs(p).join(', ');
   openModal('editModal');
 }
 
@@ -1346,7 +1423,7 @@ function renderCatalog() {
   const filter = document.getElementById('catalogFilter')?.value||'all';
   let filtered = products.filter(p=>{
     const match = !search || p.sku.toLowerCase().includes(search)||p.name.toLowerCase().includes(search);
-    const hasLoc = (p.locations||[]).length>0;
+    const hasLoc = getLocs(p).length>0;
     const statusMatch = filter==='all'||(filter==='located'&&hasLoc)||(filter==='unlocated'&&!hasLoc);
     return match && statusMatch;
   });
@@ -1355,8 +1432,8 @@ function renderCatalog() {
   const tbody = document.getElementById('catalogBody');
   if (!page.length) { tbody.innerHTML='<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--grey)">No products found.</td></tr>'; return; }
   tbody.innerHTML = page.map(p=>{
-    const hasLoc = (p.locations||[]).length>0;
-    const locs = (p.locations||[]).map(l=>`<span class="loc-tag">${l}</span>`).join('')||'—';
+    const hasLoc = getLocs(p).length>0;
+    const locs = getLocs(p).map(l=>`<span class="loc-tag">${l}</span>`).join('')||'—';
     return `<tr>
       <td><span class="sku-cell">${p.sku}</span></td>
       <td style="max-width:260px">${p.name}</td>
@@ -1522,11 +1599,11 @@ function exportToExcel() {
   // Build CSV content
   const headers = ['Item#', 'SKU', 'Product Name', 'Location(s)', 'Status'];
   const rows = products.map(p => {
-    const locs = (p.locations || []).join(', ');
-    const status = (p.locations || []).length > 0 ? 'In Warehouse' : 'No Location';
+    const locs = getLocs(p).join(', ');
+    const status = getLocs(p).length > 0 ? 'In Warehouse' : 'No Location';
     return [
       `"${(p.item_number||'').replace(/"/g,'""')}"`,
-      `"${(p.sku||'').replace(/"/g,'""')}"`,
+      `"${whSku(p).replace(/"/g,'""')}"`,
       `"${(p.name||'').replace(/"/g,'""')}"`,
       `"${locs.replace(/"/g,'""')}"`,
       `"${status}"`
@@ -1538,7 +1615,7 @@ function exportToExcel() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `WarehouseIQ_BIN_LOC_${new Date().toISOString().slice(0,10)}.csv`;
+  a.download = `WarehouseIQ_${currentWarehouse}_BIN_LOC_${new Date().toISOString().slice(0,10)}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -1548,6 +1625,14 @@ function exportToExcel() {
 
 // Close modals on overlay click
 document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open')}));
+document.addEventListener('click', e => {
+  const sel = document.getElementById('whSelector');
+  if (sel && !sel.contains(e.target)) {
+    const d = document.getElementById('whDropdown');
+    if (d) d.style.display = 'none';
+  }
+});
+document.getElementById('nameInput').addEventListener('keydown',e=>{if(e.key==='Enter')setUser()});
 document.getElementById('importFile').addEventListener('change', function() {
   const file = this.files[0];
   if (!file) return;
