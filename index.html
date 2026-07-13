@@ -559,6 +559,7 @@ tbody td{padding:9px 14px;color:var(--text);vertical-align:middle}
     <div class="history-filters">
       <div class="search-wrap" style="flex:1;min-width:200px"><span class="si">🔍</span><input id="historySearch" placeholder="Search activity…" oninput="filterHistory()"/></div>
     </div>
+    <div id="historyWhTabs" style="display:none;gap:8px;flex-wrap:wrap"></div>
     <div id="historyList">Loading...</div>
   </div>
 </div>
@@ -1014,7 +1015,17 @@ function actionIcon(action) {
 }
 
 async function logActivity(action, entityType, entityId, details) {
-  await sb.from('activity_log').insert({user_name:currentUser,action,entity_type:entityType,entity_id:String(entityId),details});
+  await sb.from('activity_log').insert({user_name:currentUser,action,entity_type:entityType,entity_id:String(entityId),details:{...details, warehouse: currentWarehouse}});
+}
+
+// ─── ACTIVITY WAREHOUSE FILTERING ─────────────────────────────────────────────
+let historyWhFilter = 'current';
+function activityWh(a) { return (a.details && a.details.warehouse) || 'Woodstock'; }
+function visibleActivity(mode) {
+  // mode: 'current' = current warehouse only (dashboard), or explicit warehouse name, or 'all' (admin only)
+  if (mode === 'all' && currentUserRole === 'admin') return activityLog;
+  const target = (mode === 'current' || !mode) ? currentWarehouse : mode;
+  return activityLog.filter(a => activityWh(a) === target && currentUserWarehouses.includes(activityWh(a)));
 }
 
 // ─── WEBHOOK ──────────────────────────────────────────────────────────────────
@@ -1082,7 +1093,7 @@ function renderDashboard() {
       <div class="alert-item">
         <span class="badge badge-${a.type==='red'?'red':'yellow'}">${a.type==='red'?'🔴 Red':'🟡 Yellow'}</span>
         <div class="alert-body">
-          <div class="alert-sku">${a.product.sku}</div>
+          <div class="alert-sku">${whSku(a.product)}</div>
           <div class="alert-desc">${a.reason}</div>
         </div>
       </div>`).join('');
@@ -1090,9 +1101,10 @@ function renderDashboard() {
 
   // Recent activity
   const ac = document.getElementById('dashActivity');
-  if (!activityLog.length) { ac.innerHTML='<div style="color:var(--grey);font-size:13px;padding:8px 0">No activity yet.</div>'; }
+  const dashAct = visibleActivity('current');
+  if (!dashAct.length) { ac.innerHTML='<div style="color:var(--grey);font-size:13px;padding:8px 0">No activity yet.</div>'; }
   else {
-    ac.innerHTML = activityLog.slice(0,4).map(a=>{
+    ac.innerHTML = dashAct.slice(0,4).map(a=>{
       const ico = actionIcon(a.action);
       return `<div class="activity-item">
         <div class="act-av" style="background:${avatarColor(a.user_name)}">${initials(a.user_name)}</div>
@@ -1141,7 +1153,7 @@ function renderMap() {
   let matchLocs = new Set();
   if (search) {
     for (const p of products) {
-      if (p.sku.toLowerCase().includes(search)||p.name.toLowerCase().includes(search)) {
+      if (whSku(p).toLowerCase().includes(search)||p.name.toLowerCase().includes(search)) {
         getLocs(p).forEach(l=>matchLocs.add(l));
       }
     }
@@ -1167,7 +1179,7 @@ function renderMap() {
           if (prods.length) {
             const p = prods[0];
             cells.push(`<div class="cell occupied${found?' cell-found':''}" onclick="showCell('${k}')">
-              <div class="cell-sku">${p.sku}</div>
+              <div class="cell-sku">${whSku(p)}</div>
               <div class="cell-name">${p.name.slice(0,28)}${p.name.length>28?'…':''}</div>
               ${prods.length>1?`<div class="cell-loc">+${prods.length-1} more</div>`:''}
             </div>`);
@@ -1227,7 +1239,7 @@ function showCell(loc) {
     document.getElementById('selectProductList').innerHTML = prods.map(p => `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid var(--grey-border);border-radius:8px;margin-bottom:8px">
         <div>
-          <div style="font-size:13px;font-weight:700;color:var(--navy)">${p.sku}</div>
+          <div style="font-size:13px;font-weight:700;color:var(--navy)">${whSku(p)}</div>
           <div style="font-size:12px;color:var(--text2);margin-top:2px">${p.name}</div>
           <div style="font-size:11px;color:var(--grey);margin-top:2px">All locations: ${getLocs(p).join(', ')}</div>
         </div>
@@ -1243,7 +1255,7 @@ function showCell(loc) {
   document.getElementById('cellModalSub').textContent = '1 product assigned';
   document.getElementById('cellModalBody').innerHTML = `
     <div style="background:var(--green-bg);border:1px solid #97C459;border-radius:8px;padding:10px 12px">
-      <div style="font-size:13px;font-weight:700;color:var(--navy)">${p.sku}</div>
+      <div style="font-size:13px;font-weight:700;color:var(--navy)">${whSku(p)}</div>
       <div style="font-size:12px;color:var(--text2);margin-top:2px">${p.name}</div>
       <div style="font-size:11px;color:var(--grey);margin-top:4px">All locations: ${getLocs(p).join(', ') || '—'}</div>
     </div>`;
@@ -1258,7 +1270,7 @@ function filterAssignSearch() {
   const q = (document.getElementById('assignSearch').value || '').toLowerCase();
   const container = document.getElementById('assignResults');
   const matches = products.filter(p =>
-    !q || p.sku.toLowerCase().includes(q) || p.name.toLowerCase().includes(q)
+    !q || whSku(p).toLowerCase().includes(q) || p.name.toLowerCase().includes(q)
   ).slice(0, 20);
 
   if (!matches.length) {
@@ -1269,7 +1281,7 @@ function filterAssignSearch() {
     const locs = getLocs(p).join(', ') || 'No location';
     return `<div style="padding:9px 12px;border-bottom:1px solid #f0f0f0;display:flex;align-items:center;justify-content:space-between">
       <div>
-        <div style="font-size:12px;font-weight:600;color:var(--navy)">${p.sku}</div>
+        <div style="font-size:12px;font-weight:600;color:var(--navy)">${whSku(p)}</div>
         <div style="font-size:11px;color:var(--grey)">${p.name.slice(0,40)}${p.name.length>40?'…':''} — <span style="color:var(--orange)">${locs}</span></div>
       </div>
       <button class="btn btn-secondary btn-sm" onclick="assignProductToLoc(${p.id})">Assign</button>
@@ -1283,10 +1295,10 @@ async function assignProductToLoc(productId) {
   const oldLocs = getLocs(p);
   const newLocs = [...new Set([...oldLocs, currentAssignLoc])];
   await sb.from('products').update(locUpdatePayload(newLocs, newLocs.join(', '))).eq('id', productId);
-  await logActivity('location_update', 'product', productId, {summary: `assigned ${p.sku} to ${currentAssignLoc} (now: ${newLocs.join(', ')})`});
+  await logActivity('location_update', 'product', productId, {summary: `assigned ${whSku(p)} to ${currentAssignLoc} (now: ${newLocs.join(', ')})`});
   await sendWebhook(p, newLocs, oldLocs);
   closeModal('assignModal');
-  showToast(`${p.sku} assigned to ${currentAssignLoc}`, 'success');
+  showToast(`${whSku(p)} assigned to ${currentAssignLoc}`, 'success');
   await loadAll();
 }
 
@@ -1329,7 +1341,7 @@ async function processImport() {
     showToast(`Updating ${skus.length} products...`, '');
     let updated = 0, notFound = 0;
     for (const sku of skus) {
-      const p = products.find(x => x.sku === sku || x.sku === sku.replace('-2','-1'));
+      const base = sku.replace(/-[12]$/,''); const p = products.find(x => x.sku.replace(/-[12]$/,'') === base);
       if (!p) { notFound++; continue; }
       const locs = csvMap[sku];
       const oldLocs = getLocs(p);
@@ -1352,7 +1364,7 @@ function openEditForLoc(loc) {
   if (!prods.length) return;
   const p = prods[0];
   editingProductId = p.id;
-  document.getElementById('editModalSub').textContent = `${p.sku} — ${p.name}`;
+  document.getElementById('editModalSub').textContent = `${whSku(p)} — ${p.name}`;
   document.getElementById('editLocInput').value = getLocs(p).join(', ');
   openModal('editModal');
 }
@@ -1365,7 +1377,7 @@ async function saveLocationEdit() {
   const old = getLocs(p).join(', ');
   const oldLocs = getLocs(p);
   await sb.from('products').update(locUpdatePayload(locs, raw)).eq('id',editingProductId);
-  await logActivity('location_update','product',editingProductId,{summary:`moved ${p.sku} from [${old}] to [${locs.join(', ')}]`});
+  await logActivity('location_update','product',editingProductId,{summary:`moved ${whSku(p)} from [${old}] to [${locs.join(', ')}]`});
   await sendWebhook(p, locs, oldLocs);
   closeModal('editModal');
   showToast('Location updated','success');
@@ -1388,7 +1400,7 @@ function renderAlerts() {
     <div class="alert-card">
       <span class="badge badge-${a.type==='red'?'red':'yellow'}" style="font-size:11px;padding:4px 10px;margin-top:1px">${a.type==='red'?'🔴 Red':'🟡 Yellow'}</span>
       <div class="alert-info">
-        <div style="font-size:13px;font-weight:700;color:var(--navy)">${a.product.sku}</div>
+        <div style="font-size:13px;font-weight:700;color:var(--navy)">${whSku(a.product)}</div>
         <div style="font-size:12px;color:var(--text2);margin-top:2px">${a.product.name}</div>
         <div class="alert-locs">${getLocs(a.product).map(l=>`<span class="alert-loc-tag ${a.type}">${l}</span>`).join('')}</div>
         <div class="alert-reason">${a.reason}</div>
@@ -1410,7 +1422,7 @@ function openEditById(id) {
   editingProductId = id;
   const p = products.find(x=>x.id===id);
   if (!p) return;
-  document.getElementById('editModalSub').textContent = `${p.sku} — ${p.name}`;
+  document.getElementById('editModalSub').textContent = `${whSku(p)} — ${p.name}`;
   document.getElementById('editLocInput').value = getLocs(p).join(', ');
   openModal('editModal');
 }
@@ -1422,7 +1434,7 @@ function renderCatalog() {
   const search = (document.getElementById('catalogSearch')?.value||'').toLowerCase();
   const filter = document.getElementById('catalogFilter')?.value||'all';
   let filtered = products.filter(p=>{
-    const match = !search || p.sku.toLowerCase().includes(search)||p.name.toLowerCase().includes(search);
+    const match = !search || whSku(p).toLowerCase().includes(search)||p.name.toLowerCase().includes(search);
     const hasLoc = getLocs(p).length>0;
     const statusMatch = filter==='all'||(filter==='located'&&hasLoc)||(filter==='unlocated'&&!hasLoc);
     return match && statusMatch;
@@ -1435,7 +1447,7 @@ function renderCatalog() {
     const hasLoc = getLocs(p).length>0;
     const locs = getLocs(p).map(l=>`<span class="loc-tag">${l}</span>`).join('')||'—';
     return `<tr>
-      <td><span class="sku-cell">${p.sku}</span></td>
+      <td><span class="sku-cell">${whSku(p)}</span></td>
       <td style="max-width:260px">${p.name}</td>
       <td><div class="loc-tags">${locs}</div></td>
       <td><span class="badge badge-${hasLoc?'green':'red'}">${hasLoc?'In warehouse':'No location'}</span></td>
@@ -1544,11 +1556,39 @@ async function saveNewAisle() {
 // ─── HISTORY ─────────────────────────────────────────────────────────────────
 function filterHistory() {
   const s = (document.getElementById('historySearch')?.value||'').toLowerCase();
-  const filtered = s ? activityLog.filter(a=>a.user_name.toLowerCase().includes(s)||(a.details?.summary||'').toLowerCase().includes(s)) : activityLog;
+  let base = visibleActivity(historyWhFilter);
+  const filtered = s ? base.filter(a=>a.user_name.toLowerCase().includes(s)||(a.details?.summary||'').toLowerCase().includes(s)) : base;
   renderHistoryList(filtered);
 }
 
-function renderHistory() { renderHistoryList(activityLog); }
+function setHistoryWh(mode) {
+  historyWhFilter = mode;
+  renderHistory();
+}
+
+function renderHistory() {
+  // Admin gets warehouse filter tabs; others see only their current warehouse
+  const tabsEl = document.getElementById('historyWhTabs');
+  if (tabsEl) {
+    if (currentUserRole === 'admin') {
+      const opts = [['all','All warehouses'],['Woodstock','🏢 Woodstock'],['Edmonton','🏢 Edmonton']];
+      tabsEl.innerHTML = opts.map(([v,l]) =>
+        `<button class="filter-btn" style="${historyWhFilter===v?'background:#043e78;color:#fff;border-color:#043e78':''}" onclick="setHistoryWh('${v}')">${l}</button>`
+      ).join('');
+      tabsEl.style.display = 'flex';
+    } else {
+      historyWhFilter = 'current';
+      tabsEl.style.display = 'none';
+    }
+  }
+  renderHistoryList(visibleActivity(historyWhFilter));
+}
+
+function whBadge(a) {
+  const w = activityWh(a);
+  const c = w === 'Edmonton' ? '#BA7517' : '#043e78';
+  return `<span style="font-size:10px;font-weight:700;color:${c};border:1px solid ${c};border-radius:5px;padding:1px 6px;margin-left:6px">${w}</span>`;
+}
 
 function renderHistoryList(log) {
   const el = document.getElementById('historyList');
@@ -1558,7 +1598,7 @@ function renderHistoryList(log) {
     return `<div class="history-item">
       <div class="history-icon ${ico.cls}">${ico.ico}</div>
       <div class="history-body">
-        <div class="history-text"><b>${a.user_name}</b> — ${a.details?.summary||a.action+' '+a.entity_type}</div>
+        <div class="history-text"><b>${a.user_name}</b> — ${a.details?.summary||a.action+' '+a.entity_type}${currentUserRole==='admin'?whBadge(a):''}</div>
         <div class="history-meta">${new Date(a.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})} · ${timeAgo(a.created_at)}</div>
       </div>
       <div class="act-av" style="background:${avatarColor(a.user_name)};width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0">${initials(a.user_name)}</div>
